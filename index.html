@@ -129,6 +129,9 @@ canvas.ch3:active{cursor:grabbing}
 .ch-tip .mut{color:var(--muted)} .ch-tip .up,.ch-tip .dn{color:var(--accent)}
 td.chg input{font-weight:700;text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:3px}
 th.bad input{color:var(--bad)}
+table.g tr>th:first-child{position:sticky;left:0;z-index:2;box-shadow:1px 0 0 var(--line)}
+table.g th.hlax{background:color-mix(in srgb,var(--accent) 22%,var(--bg))}
+table.g th.hlax input{color:var(--ink)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .sw{width:14px;height:14px;border-radius:3px;display:inline-block}
@@ -287,7 +290,8 @@ dialog#dlg-save{width:min(640px,calc(100vw - 32px))}
       <li>Defender: l'allarme 10AS può disturbare la scrittura; si disattiva togliendo il fusibile 4 sotto il sedile del guidatore, da rimettere alla fine.</li>
       <li>Tieni sempre una copia della mappa che c'è adesso in centralina (si legge con «Read map from ECU»).</li>
     </ul></details>
-    <div class="btnrow end"><button value="cancel" formnovalidate>Annulla</button><button id="sv-ok" type="button" class="primary">Salva</button></div>
+    <p id="sv-where" class="msg" hidden></p>
+    <div class="btnrow end"><button value="cancel" formnovalidate>Annulla</button><button id="sv-over" type="button" hidden></button><button id="sv-ok" type="button" class="primary">Salva</button></div>
   </form>
 </dialog>
 
@@ -1055,7 +1059,19 @@ function convFor(label,k){
   if(k&&k.k==="factor")return v=>String(v/100).replace(".",",")+" %";
   return null;
 }
-function cellHi(k,on){const i=document.getElementById("c-"+k);if(i)i.closest("td").classList.toggle("hl",on)}
+// cella collegata al punto: evidenziata insieme alla sua intestazione di riga e di colonna, e portata in vista se la griglia scorre
+function cellHi(k,on){
+  const i=document.getElementById("c-"+k);if(!i)return;
+  const td=i.closest("td");td.classList.toggle("hl",on);
+  const t=sel!==null&&typeof sel!=="string"?readTable(M,sel):null;if(!t||!t.ok)return;
+  const cx=document.getElementById("ax-"+(k%t.nx)),cy=document.getElementById("ay-"+Math.floor(k/t.nx));
+  [cx,cy].forEach(e=>{if(e)e.closest("th").classList.toggle("hlax",on)});
+  if(on){const w=td.closest(".gridwrap");if(w&&w.scrollWidth>w.clientWidth){const l=td.offsetLeft,r=l+td.offsetWidth;
+    if(l<w.scrollLeft+70||r>w.scrollLeft+w.clientWidth)w.scrollLeft=Math.max(0,l-w.clientWidth/2)}}
+}
+// il grafico si ridisegna quando cambia la larghezza della finestra
+let chResizeT=null,chW=innerWidth;
+addEventListener("resize",()=>{clearTimeout(chResizeT);chResizeT=setTimeout(()=>{if(innerWidth!==chW&&CH.redraw&&!CH.drag&&document.getElementById("chart")){chW=innerWidth;CH.redraw()}},150)});
 
 // barra dei comandi della modifica col grafico
 function edBar(t,refs,two){
@@ -1161,7 +1177,9 @@ function drawLines(area,info,two,showTip,hideTip,rerender){
   const sAx=two?(swap?t.x:t.y):null,sLab=swap?lx:ly;
   const num=isInc(ax);  // asse in proporzione ai valori, altrimenti a passi uguali
   const xv=p=>num?ax[p]:p;
-  const all=t.v.slice();refs.forEach(r=>all.push(...r.t.v));
+  // scala dei valori: tutta la tabella, oppure solo la linea isolata (così si vede in dettaglio)
+  const visK=CH.solo!==null&&ser[CH.solo]?ser[CH.solo]:null;
+  const all=visK?visK.map(k=>t.v[k]):t.v.slice();refs.forEach(r=>all.push(...(visK?visK.map(k=>r.t.v[k]):r.t.v)));
   let lo=Math.min(...all),hi=Math.max(...all);
   if(CH.freeze){lo=Math.min(lo,CH.freeze[0]);hi=Math.max(hi,CH.freeze[1])}   // scala ferma mentre trascini
   const yt=niceTicks(lo,hi,5);lo=Math.min(lo,yt[0]);hi=Math.max(hi,yt[yt.length-1]);
@@ -1497,25 +1515,54 @@ function zipOne(name,data){ // archivio zip senza compressione, un solo file
   return new Blob([lh,data,cd,end]);
 }
 /* Il Nanocom legge solo nomi di file fino a 8 caratteri (manuale Nanocom Evolution): il nome si sceglie al salvataggio. */
-function suggestName(){const b=M.name.replace(/\.(map|tun)$/i,"").replace(/[^A-Za-z0-9_-]/g,"");return (b.length>=8?b.slice(0,7):b)+"M"}
+function suggestName(){if(M.saveName&&/^[A-Za-z0-9_-]{1,8}$/.test(M.saveName))return M.saveName;const b=M.name.replace(/\.(map|tun)$/i,"").replace(/[^A-Za-z0-9_-]/g,"");return (b.length>=8?b.slice(0,7):b)+"M"}
 function svMsg(t,bad){const m=$("#sv-msg");m.className="msg"+(bad?" bad":"");m.textContent=t}
 $("#b-save").onclick=()=>{
   if(!M)return;
   $("#sv-name").value=suggestName();
   $("#sv-ext").value=/\.tun$/i.test(M.name)?".TUN":".map";
   svMsg("Il Nanocom non legge i nomi più lunghi di 8 caratteri: usa lettere, numeri, trattino o trattino basso, senza spazi.");
+  // con Chrome ed Edge si sceglie la cartella (ricordata la volta dopo); negli altri browser va nei Download
+  const picker=canPick();
+  $("#sv-ok").textContent=picker?"Salva in…":"Salva";
+  const wh=$("#sv-where");wh.hidden=false;
+  wh.textContent=picker?"Con «Salva in…» scegli tu la cartella, per esempio direttamente la scheda SD: la prossima volta riparte da lì.":"Il file va nella cartella dei Download del browser.";
+  const ov=$("#sv-over");
+  if(picker&&M.saveHandle){ov.hidden=false;ov.textContent="Sovrascrivi "+M.saveHandle.name}else ov.hidden=true;
   $("#dlg-save").showModal();$("#sv-name").select();
 };
+function canPick(){return !(window.claude&&window.claude.use)&&typeof window.showSaveFilePicker==="function"}
+// Ctrl+S apre il salvataggio invece di salvare la pagina
+addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&e.key.toLowerCase()==="s"){e.preventDefault();if(M&&!document.querySelector("dialog[open]"))$("#b-save").click()}});
+$("#sv-over").onclick=()=>doSave(true);
 $("#sv-name").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();doSave()}});
 $("#sv-ok").onclick=()=>doSave();
-async function doSave(){
+async function doSave(over=false){
   if(!M)return;
   const n=$("#sv-name").value.trim();
-  if(!/^[A-Za-z0-9_-]{1,8}$/.test(n)){svMsg("Nome non valido: da 1 a 8 caratteri, solo lettere, numeri, trattino o trattino basso.",true);$("#sv-name").focus();return}
+  if(!over&&!/^[A-Za-z0-9_-]{1,8}$/.test(n)){svMsg("Nome non valido: da 1 a 8 caratteri, solo lettere, numeri, trattino o trattino basso.",true);$("#sv-name").focus();return}
   $("#dlg-save").close();
   const out=M.b.slice();fixMapSum(M,out);w16(out,out.length-2,checksum(out));
   // un .tun del Nanocom ha lo stesso formato del .map: si salva con la stessa estensione
   const fname=n+$("#sv-ext").value;
+  if(canPick()){
+    // la finestra «Salva con nome» del sistema; id = la cartella viene ricordata dal browser
+    try{
+      const h=over&&M.saveHandle?M.saveHandle:await window.showSaveFilePicker({id:"officina-td5-mappe",suggestedName:fname,
+        types:[{description:"Mappa Td5",accept:{"application/octet-stream":[$("#sv-ext").value.toLowerCase()]}}]});
+      const w=await h.createWritable();await w.write(out);await w.close();
+      const base=h.name.replace(/\.[^.]*$/,"");
+      M.saveHandle=h;if(/^[A-Za-z0-9_-]{1,8}$/.test(base))M.saveName=base;
+      if(!/^[A-Za-z0-9_-]{1,8}$/.test(base))showError(`Salvato come «${h.name}», ma il Nanocom legge solo nomi fino a 8 caratteri (lettere, numeri, - e _): rinominalo prima di copiarlo sulla scheda.`);
+      else toast("Salvato: "+h.name);
+      return;
+    }catch(err){
+      if(err&&err.name==="AbortError")return;          // finestra chiusa senza salvare
+      if(over){M.saveHandle=null;showError("Non riesco a sovrascrivere il file di prima: salvalo di nuovo con «Salva in…».");return}
+      // se il browser non permette la scelta della cartella, si scarica come sempre
+    }
+  }
+  M.saveName=n;
   let dl=null;
   try{dl=window.claude&&window.claude.use?await window.claude.use("downloads"):null}catch(e){dl=null}
   if(dl){
@@ -1590,7 +1637,7 @@ async function createNew(){
 }
 $("#b-new").onclick=()=>{initNew();renderNew();$("#dlg-new").showModal()};
 /* ---------- Proposte e segnalazioni ---------- */
-const VERSIONE="P · 28 ottobre 2026";   // aggiornare a ogni nuova versione
+const VERSIONE="Q · 28 ottobre 2026";   // aggiornare a ogni nuova versione
 const MAIL_CONTATTO="enzo.ai.03102026@gmail.com";
 // il link apre un'email con l'oggetto già scritto
 $("#mail-link").href="mailto:"+MAIL_CONTATTO+"?subject="+encodeURIComponent("Officina Td5 · proposta o segnalazione (versione "+VERSIONE.split(" ")[0]+")");

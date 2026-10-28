@@ -6,7 +6,7 @@ Pagina per lavorare sulle mappe centralina del Land Rover Td5 (file `.map` e `.t
 
 - crea una mappa nuova partendo da una delle 49 mappe originali Land Rover
 - apri una mappa, confrontala con l'originale dello stesso firmware o con un'altra mappa
-- modifica le tabelle dalla griglia o dal grafico, ingrandiscile, annulla e rifai
+- modifica le tabelle dalla griglia o dal grafico (anche più punti insieme, di un valore o di una percentuale), ingrandiscile, annulla e rifai
 - controllo di integrità del file e salvataggio con i controlli corretti per il Nanocom
 
 Le mappe vengono aperte e modificate solo nel tuo browser: non vengono inviate a nessuno.
